@@ -1,0 +1,28 @@
+name: Validate churn workflow
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    env:
+      MPLBACKEND: Agg
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - run: python -m unittest discover -s tests -v
+      - run: python src/train.py
+      - run: python src/predict.py --input examples/new_customers.csv --output reports/new_customer_risk_scores.csv
+      - run: python -m jupyter nbconvert --to notebook --execute notebooks/01_eda.ipynb --output 01_eda.executed --output-dir /tmp --ExecutePreprocessor.timeout=180

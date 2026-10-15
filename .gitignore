@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Reproducible local outputs; metrics and selected figures remain reviewable.
+models/*.joblib
+reports/*risk_scores*.csv
+reports/*.png
+reports/*.executed.ipynb
