@@ -36,7 +36,7 @@ SEED = 42
 
 def load_data(path):
     """Reject ambiguous targets/IDs and remove exact duplicate source records."""
-    frame = pd.read_csv(path).drop_duplicates().copy()
+    frame = pd.read_csv(path, dtype={'customerID': 'string'}).drop_duplicates().copy()
     CustomerCleaner().fit(frame)
     if 'Churn' not in frame or not frame['Churn'].isin(['No', 'Yes']).all():
         raise ValueError('Training requires a Churn column containing only No/Yes.')
@@ -78,6 +78,16 @@ def train(data_path=DATA_PATH, model_path=None, reports_dir=None, jobs=2):
     model_path = Path(model_path or ROOT / 'models/churn_pipeline.joblib')
     reports_dir = Path(reports_dir or ROOT / 'reports')
     figures = reports_dir / 'figures'
+    # Validate paths before fitting or opening any output file.
+    names = ['logistic_regression', 'random_forest']
+    outputs = [reports_dir / 'model_metrics.json', reports_dir / 'confusion_matrix.png',
+               figures / 'roc_curves.png']
+    outputs += [figures / f'confusion_matrix_{name}.png' for name in names]
+    resolved = [path.resolve() for path in [model_path, *outputs]]
+    if Path(data_path).resolve() in resolved:
+        raise ValueError('Training outputs must not overwrite the input dataset.')
+    if len(set(resolved)) != len(resolved):
+        raise ValueError('Model and report output paths must be different.')
     figures.mkdir(parents=True, exist_ok=True)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     frame = load_data(data_path)
@@ -114,7 +124,12 @@ def train(data_path=DATA_PATH, model_path=None, reports_dir=None, jobs=2):
         result['cv_roc_auc_std'] = float(cv_scores[name].std())
         result['cv_roc_auc_folds'] = cv_scores[name].tolist()
         results.append(result)
-        RocCurveDisplay.from_estimator(pipeline, x_test, y_test, ax=ax, name=name)
+        display = RocCurveDisplay.from_estimator(
+            pipeline, x_test, y_test, ax=ax, name=name.replace('_', ' ').title()
+        )
+        display.line_.set_label(
+            f"{name.replace('_', ' ').title()} (AUC = {result['roc_auc']:.4f})"
+        )
         cm_fig, cm_ax = plt.subplots(figsize=(5, 4))
         ConfusionMatrixDisplay.from_estimator(
             pipeline, x_test, y_test, ax=cm_ax,
@@ -128,6 +143,8 @@ def train(data_path=DATA_PATH, model_path=None, reports_dir=None, jobs=2):
         plt.close(cm_fig)
     ax.plot([0, 1], [0, 1], '--', color='gray', label='Random ranking')
     ax.set_title('Holdout ROC curves (20% stratified split)')
+    ax.set_xlabel('False positive rate')
+    ax.set_ylabel('True positive rate (churn recall)')
     ax.legend()
     fig.tight_layout()
     fig.savefig(figures / 'roc_curves.png', dpi=160)

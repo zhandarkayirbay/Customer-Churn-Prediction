@@ -55,7 +55,10 @@ def main():
             raise ValueError('Output must not overwrite the model.')
         # joblib uses pickle: load only artifacts from a trusted source.
         model = joblib.load(args.model)
-        scores = predict_customers(pd.read_csv(args.input), model)
+        if not callable(getattr(model, 'predict_proba', None)):
+            raise ValueError('Model artifact must provide predict_proba; train it first.')
+        frame = pd.read_csv(args.input, dtype={'customerID': 'string'})
+        scores = predict_customers(frame, model)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         scores.to_csv(args.output, index=False)
     except (OSError, ValueError, KeyError, EOFError, pickle.UnpicklingError) as exc:

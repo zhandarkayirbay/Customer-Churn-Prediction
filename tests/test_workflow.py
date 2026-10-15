@@ -13,7 +13,7 @@ from sklearn.linear_model import LogisticRegression
 
 from src.predict import predict_customers, risk_band
 from src.preprocessing import CustomerCleaner, NUMERIC_FEATURES
-from src.train import DATA_PATH, ROOT, build_pipeline, load_data
+from src.train import DATA_PATH, ROOT, build_pipeline, load_data, train
 
 
 class WorkflowTests(unittest.TestCase):
@@ -77,6 +77,56 @@ class WorkflowTests(unittest.TestCase):
                 frame.to_csv(path, index=False)
                 with self.assertRaises(ValueError):
                     load_data(path)
+
+    def test_training_output_cannot_overwrite_data_or_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            data = directory / 'data.csv'
+            self.frame.to_csv(data, index=False)
+            before = data.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'overwrite the input'):
+                train(data, model_path=data, reports_dir=directory)
+            self.assertEqual(data.read_bytes(), before)
+            with self.assertRaisesRegex(ValueError, 'paths must be different'):
+                train(data, model_path=directory / 'model_metrics.json',
+                      reports_dir=directory)
+
+    def test_cli_preserves_leading_zero_identifiers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            model_path = directory / 'model.joblib'
+            input_path, output_path = directory / 'input.csv', directory / 'scores.csv'
+            joblib.dump(self.model, model_path)
+            frame = self.frame.iloc[:3].copy()
+            frame['customerID'] = ['001', '1', '0002']
+            frame.to_csv(input_path, index=False)
+            loaded = load_data(input_path)
+            self.assertEqual(loaded.customerID.tolist(), ['001', '1', '0002'])
+            result = subprocess.run(
+                [sys.executable, str(ROOT / 'src/predict.py'), '--model',
+                 str(model_path), '--input', str(input_path), '--output', str(output_path)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            scores = pd.read_csv(output_path, dtype={'customerID': 'string'})
+            self.assertEqual(scores.customerID.tolist(), ['001', '1', '0002'])
+
+    def test_cli_rejects_non_predictive_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            model_path, input_path = directory / 'invalid.joblib', directory / 'input.csv'
+            joblib.dump({'not': 'a classifier'}, model_path)
+            self.frame.iloc[:2].to_csv(input_path, index=False)
+            result = subprocess.run(
+                [sys.executable, str(ROOT / 'src/predict.py'), '--model',
+                 str(model_path), '--input', str(input_path),
+                 '--output', str(directory / 'out.csv')],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('must provide predict_proba', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+            self.assertFalse((directory / 'out.csv').exists())
 
     def test_serialized_cli_predicts_unlabelled_data(self):
         with tempfile.TemporaryDirectory() as directory:
